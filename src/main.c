@@ -13,11 +13,13 @@
 #include "easyconfig.h"
 #include "error.h"
 
+enum type { UNSPECIFIED = 0, CODE, DATA, CONFIG };
+
 struct {
 	void (*action) (const char *, minipro_handle_t *handle, device_t *device);
 	char *filename;
 	device_t *device;
-	enum { UNSPECIFIED = 0, CODE, DATA, CONFIG } page;
+	enum type page;
 	int no_erase;
 	int no_protect_off;
 	int no_protect_on;

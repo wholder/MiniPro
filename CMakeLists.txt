@@ -16,6 +16,7 @@ add_executable(MiniPro
         libusb/os/poll_posix.h
         libusb/os/threads_posix.c
         libusb/os/threads_posix.h
+        libusb/config.h
         libusb/core.c
         libusb/descriptor.c
         libusb/hotplug.c
@@ -42,5 +43,4 @@ add_executable(MiniPro
         src/minipro-query-db.c
         src/minipro.c
         src/minipro.h
-        src/version.h
-        libusb/config.h)
+        src/version.h)
