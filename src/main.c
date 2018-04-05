@@ -20,7 +20,6 @@ enum type {
 
 struct {
 	void (*action) (const char *, minipro_handle_t *handle, device_t *device);
-
 	char *filename;
 	device_t *device;
 	enum type page;
@@ -34,10 +33,6 @@ struct {
 	int idcheck_skip;
 	int idcheck_continue;
 } cmdopts;
-
-boolean_t endsWith (const char *filename, const char *suffix) ;
-
-void hexout (FILE *fhex, int byte, int memory_location, int end) ;
 
 void print_help_and_exit (char *progname, int rv) {
 	char usage[] =
@@ -237,44 +232,19 @@ void write_page_ram (minipro_handle_t *handle, unsigned char *buf, unsigned int 
 	update_status(status_msg, "OK\n");
 }
 
-/* Wrappers for operating with files */
-void read_page_file (minipro_handle_t *handle, const char *filename, unsigned int type, const char *name, int size) {
-	FILE *file = fopen(filename, "w");
-	if (file == NULL) {
-		PERROR("Couldn't open file for writing");
-	}
-	unsigned char *buf = malloc(size);
-	if (!buf) {
-		ERROR("Can't malloc");
-	}
-	read_page_ram(handle, buf, type, name, size);
-	if (endsWith(filename, ".hex")) {
-		// Write Intel Hex Ascii File
-		int begin = 0, end = size - 1, addr = 0;
-		for (addr = begin; addr <= end; addr++) {
-			hexout(file, buf[addr], addr, 0);
-		}
-		hexout(file, 0, 0, 1);
-	} else {
-		// Write Binary file
-		fwrite(buf, 1, size, file);
-	}
-	fclose(file);
-	free(buf);
-}
-
-boolean_t endsWith (const char *filename, const char *suffix) {
+boolean_t endsWith (char *filename, const char *suffix) {
 	char *off = strrchr(filename, '.');
 	return (boolean_t) (strcmp(off, suffix) == 0);
 }
 
-/* produce intel hex file output... call this routine with */
-/* each byte to output and it's memory location.  The file */
-/* pointer fhex must have been opened for writing.  After */
-/* all data is written, call with end=1 (normally set to 0) */
-/* so it will flush the data from its static buffer */
+/*
+ * produce intel hex file output... call this routine with each byte to output and it's memory location.
+ * The file pointer fhex must have been opened for writing.  After all data is written, call with end = 1
+ * (normally set to 0) so it will flush the data from its static buffer
+ * Code adapted from: https://classes.soe.ucsc.edu/cmpe126/Spring04/docs/hex.c
+ */
 
-#define MAXHEXLINE 32	/* the maximum number of bytes to put in one line */
+#define MAXHEXLINE 32			// the maximum number of bytes to put in one line
 
 void hexout (FILE *fhex, int byte, int memory_location, int end) {
 	static int byte_buffer[MAXHEXLINE];
@@ -315,6 +285,66 @@ void hexout (FILE *fhex, int byte, int memory_location, int end) {
 	buffer_pos++;
 }
 
+/*
+ * parses a line of intel hex code, stores the data in bytes[] and the beginning address in addr,
+ * and returns a 1 if the line was valid, or a 0 if an error occured.  The variable num gets the
+ * number of bytes that were stored into bytes[]
+ */
+
+int parse_hex_line(char *theline, int bytes[], int *addr, int *num, int *code) {
+	int sum, len, cksum;
+	char *ptr;
+	*num = 0;
+	if (theline[0] != ':') return 0;
+	if (strlen(theline) < 11) return 0;
+	ptr = theline+1;
+	if (!sscanf(ptr, "%02x", &len)) return 0;
+	ptr += 2;
+	if ( strlen(theline) < (11 + (len * 2)) ) return 0;
+	if (!sscanf(ptr, "%04x", addr)) return 0;
+	ptr += 4;
+	if (!sscanf(ptr, "%02x", code)) return 0;
+	ptr += 2;
+	sum = (len & 255) + ((*addr >> 8) & 255) + (*addr & 255) + (*code & 255);
+	while(*num != len) {
+		if (!sscanf(ptr, "%02x", &bytes[*num])) return 0;
+		ptr += 2;
+		sum += bytes[*num] & 255;
+		(*num)++;
+		if (*num >= 256) return 0;
+	}
+	if (!sscanf(ptr, "%02x", &cksum)) return 0;
+	if ( ((sum & 255) + (cksum & 255)) & 255 )
+		return 0; 					// checksum error
+	return 1;
+}
+
+/* Wrappers for operating with files */
+void read_page_file (minipro_handle_t *handle, const char *filename, unsigned int type, const char *name, int size) {
+	FILE *file = fopen(filename, "w");
+	if (file == NULL) {
+		PERROR("Couldn't open file for writing");
+	}
+	unsigned char *buf = malloc(size);
+	if (!buf) {
+		ERROR("Can't malloc");
+	}
+	read_page_ram(handle, buf, type, name, size);
+	if (endsWith(filename, ".hex")) {
+		// Write Intel Hex Ascii File
+		int begin = 0, end = size - 1, addr = 0;
+		for (addr = begin; addr <= end; addr++) {
+			hexout(file, buf[addr], addr, 0);
+		}
+		hexout(file, 0, 0, 1);
+	} else {
+		// Write Binary file
+		fwrite(buf, 1, size, file);
+	}
+	fclose(file);
+	free(buf);
+}
+
 void write_page_file (minipro_handle_t *handle, const char *filename, unsigned int type, const char *name, int size) {
 	FILE *file = fopen(filename, "r");
 	if (file == NULL) {
@@ -324,8 +354,44 @@ void write_page_file (minipro_handle_t *handle, const char *filename, unsigned i
 	if (!buf) {
 		ERROR("Can't malloc");
 	}
-	if (fread(buf, 1, size, file) != size && !cmdopts.size_error) {
-		ERROR("Short read");
+	if (endsWith(filename, ".hex")) {
+		// Read Intel Hex Ascii File
+		char line[1000];
+		int addr, n, status, bytes[256];
+		int i, total=0, lineno=1;
+		int minaddr=65536, maxaddr=0;
+		while (!feof(file) && !ferror(file)) {
+			line[0] = '\0';
+			fgets(line, 1000, file);
+			if (line[strlen(line)-1] == '\n') line[strlen(line)-1] = '\0';
+			if (line[strlen(line)-1] == '\r') line[strlen(line)-1] = '\0';
+			if (parse_hex_line(line, bytes, &addr, &n, &status)) {
+				if (status == 0) {  /* data */
+					for(i=0; i<=(n-1); i++) {
+						buf[addr] = bytes[i] & 255;
+						total++;
+						if (addr < minaddr) minaddr = addr;
+						if (addr > maxaddr) maxaddr = addr;
+						addr++;
+					}
+				}
+				if (status == 1) {  // end of file
+					fclose(file);
+					printf("Loaded %d bytes between:", total);
+					printf(" %04X to %04X\n", minaddr, maxaddr);
+					return;
+				}
+				if (status == 2) ;  // begin of file
+			} else {
+				printf("   Error: '%s', line: %d\n", filename, lineno);
+			}
+			lineno++;
+		}
+	} else {
+		// Read Binary file
+		if (fread(buf, 1, size, file) != size && !cmdopts.size_error) {
+			ERROR("Short read");
+		}
 	}
 	write_page_ram(handle, buf, type, name, size);
 	fclose(file);
@@ -492,7 +558,7 @@ void action_write (const char *filename, minipro_handle_t *handle, device_t *dev
 		case UNSPECIFIED:
 		case CODE:
 			fsize = get_file_size(filename);
-			if (fsize != device->code_memory_size) {
+			if (!endsWith(filename, ".hex") && fsize != device->code_memory_size) {
 				if (!cmdopts.size_error)
 					ERROR2("Incorrect file size: %d (needed %d)\n", fsize, device->code_memory_size);
 				else if (cmdopts.size_nowarn == 0)
@@ -501,7 +567,7 @@ void action_write (const char *filename, minipro_handle_t *handle, device_t *dev
 			break;
 		case DATA:
 			fsize = get_file_size(filename);
-			if (fsize != device->data_memory_size) {
+			if (!endsWith(filename, ".hex") && fsize != device->data_memory_size) {
 				if (!cmdopts.size_error)
 					ERROR2("Incorrect file size: %d (needed %d)\n", fsize, device->data_memory_size);
 				else if (cmdopts.size_nowarn == 0)
