@@ -158,7 +158,7 @@ int get_file_size (const char *filename) {
 	int size = ftell(file);
 	fseek(file, 0, SEEK_SET);
 	fclose(file);
-	return (size);
+	return size;
 }
 
 void update_status (char *status_msg, char *fmt, ...) {
@@ -178,7 +178,7 @@ int compare_memory (unsigned char *buf1, unsigned char *buf2, int size, unsigned
 			return (i);
 		}
 	}
-	return (-1);
+	return -1;
 }
 
 /* RAM-centric IO operations */
@@ -295,25 +295,34 @@ int parse_hex_line(char *theline, int bytes[], int *addr, int *num, int *code) {
 	int sum, len, cksum;
 	char *ptr;
 	*num = 0;
-	if (theline[0] != ':') return 0;
-	if (strlen(theline) < 11) return 0;
+	if (theline[0] != ':')
+		return 0;
+	if (strlen(theline) < 11)
+		return 0;
 	ptr = theline+1;
-	if (!sscanf(ptr, "%02x", &len)) return 0;
+	if (!sscanf(ptr, "%02x", &len))
+		return 0;
 	ptr += 2;
-	if ( strlen(theline) < (11 + (len * 2)) ) return 0;
-	if (!sscanf(ptr, "%04x", addr)) return 0;
+	if ( strlen(theline) < (11 + (len * 2)) )
+		return 0;
+	if (!sscanf(ptr, "%04x", addr))
+		return 0;
 	ptr += 4;
-	if (!sscanf(ptr, "%02x", code)) return 0;
+	if (!sscanf(ptr, "%02x", code))
+		return 0;
 	ptr += 2;
 	sum = (len & 255) + ((*addr >> 8) & 255) + (*addr & 255) + (*code & 255);
 	while(*num != len) {
-		if (!sscanf(ptr, "%02x", &bytes[*num])) return 0;
+		if (!sscanf(ptr, "%02x", &bytes[*num]))
+			return 0;
 		ptr += 2;
 		sum += bytes[*num] & 255;
 		(*num)++;
-		if (*num >= 256) return 0;
+		if (*num >= 256)
+			return 0;
 	}
-	if (!sscanf(ptr, "%02x", &cksum)) return 0;
+	if (!sscanf(ptr, "%02x", &cksum))
+		return 0;
 	if ( ((sum & 255) + (cksum & 255)) & 255 )
 		return 0; 					// checksum error
 	return 1;
@@ -698,5 +707,5 @@ int main (int argc, char **argv) {
 	}
 	cmdopts.action(cmdopts.filename, handle, device);
 	minipro_close(handle);
-	return (0);
+	return 0;
 }
